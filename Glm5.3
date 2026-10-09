@@ -1,0 +1,1934 @@
+-- =========================================================================
+-- NEXUS AI V6 -- GLM 5.3 ULTIMATE | REWRITE COMPLET + AMELIORATIONS
+-- =========================================================================
+-- Spy v2 (namecall) | Server hop | Backdoor scan | Toast | Context menu
+-- Settings auto-save | Scheduler | Multi-objectifs | Hot reload
+-- Cloud backup | Stats watcher | Shop analyzer | Guardian | Metrics
+-- =========================================================================
+
+-- =========================================================================
+-- SECTION 1 : SERVICES
+-- =========================================================================
+local HttpService         = game:GetService("HttpService")
+local Players             = game:GetService("Players")
+local ReplicatedStorage   = game:GetService("ReplicatedStorage")
+local StarterGui          = game:GetService("StarterGui")
+local StarterPlayer       = game:GetService("StarterPlayer")
+local CoreGui             = game:GetService("CoreGui")
+local UserInputService    = game:GetService("UserInputService")
+local TweenService        = game:GetService("TweenService")
+local RunService          = game:GetService("RunService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local Workspace           = game:GetService("Workspace")
+local TeleportService     = game:GetService("TeleportService")
+
+local ServerStorage, ServerScriptService
+pcall(function() ServerStorage       = game:GetService("ServerStorage")       end)
+pcall(function() ServerScriptService = game:GetService("ServerScriptService") end)
+
+local player = Players.LocalPlayer
+local char   = player.Character or player.CharacterAdded:Wait()
+
+-- Fallback HTTP compatible Synapse / KRNL / Delta / Wave
+local httpRequest = (syn and syn.request) or (http and http.request) or request
+
+-- =========================================================================
+-- SECTION 2 : ETAT GLOBAL
+-- =========================================================================
+local running            = false
+local killed             = false
+local graphBuilt         = false
+local antiCheatDetected  = false
+local remoteSpyActive    = false
+local antiKickSetup      = false
+local currentGameFolder  = nil
+local hotReloadPath      = nil
+local scriptVersion      = 1
+local sessionStats = {
+    dps = 0, remotesTested = 0, remoteSuccesses = 0,
+    cycles = 0, kills = 0, fps = 60, ping = 0,
+    startTime = os.time()
+}
+local autoTuneDelay      = 0.2
+local remoteCallsV2      = {}
+local oldNamecallUnified = nil
+local hookedRemotesLegacy = {}
+
+-- =========================================================================
+-- SECTION 3 : CONFIG
+-- =========================================================================
+local MODEL_NAME          = "z-ai/glm-5.3"
+local API_URL             = "https://integrate.api.nvidia.com/v1/chat/completions"
+local API_KEY_FILE        = "nexus_api_key.txt"
+local SETTINGS_FILE       = "nexus_settings.json"
+local MEMORY_BASE         = "nexus_games"
+local MAX_PROMPT_CHARS    = 55000
+local MAX_RETRIES         = 4
+local RETRY_DELAY         = 5
+local TIMEOUT             = 120
+local MAX_CYCLES          = 15
+local REMOTE_BURST_COUNT  = 10
+local REMOTE_BURST_WINDOW = 2
+local MONITOR_INTERVAL    = 1.0
+local AUTO_TUNE_HIGH      = 0.05
+local AUTO_TUNE_LOW       = 0.5
+
+-- =========================================================================
+-- SECTION 4 : JAILBREAK PROMPT
+-- =========================================================================
+local DEFAULT_JAILBREAK = [[
+PLACE_TON_JAILBREAK_PROMPT_ICI
+]]
+
+-- =========================================================================
+-- SECTION 5 : NETTOYAGE
+-- =========================================================================
+pcall(function()
+    for _, n in ipairs({"NexusAutonomousAIV5", "NexusAutonomousAIV6"}) do
+        local g = CoreGui:FindFirstChild(n)
+        if g then g:Destroy() end
+        local g2 = player.PlayerGui:FindFirstChild(n)
+        if g2 then g2:Destroy() end
+    end
+end)
+
+-- =========================================================================
+-- SECTION 6 : UI MOBILE
+-- =========================================================================
+local NG = Instance.new("ScreenGui")
+NG.Name             = "NexusAutonomousAIV6"
+NG.IgnoreGuiInset   = true
+NG.ResetOnSpawn     = false
+NG.ZIndexBehavior   = Enum.ZIndexBehavior.Sibling
+pcall(function()
+    NG.Parent = (type(gethui) == "function" and gethui()) or CoreGui
+end)
+if not NG.Parent then NG.Parent = player:WaitForChild("PlayerGui") end
+
+local LogoBtn = Instance.new("TextButton")
+LogoBtn.Size             = UDim2.new(0, 50, 0, 50)
+LogoBtn.Position         = UDim2.new(0, 10, 0.42, 0)
+LogoBtn.BackgroundColor3 = Color3.fromRGB(187, 134, 252)
+LogoBtn.Font             = Enum.Font.GothamBold
+LogoBtn.Text             = "N"
+LogoBtn.TextColor3       = Color3.fromRGB(13, 13, 17)
+LogoBtn.TextSize         = 24
+LogoBtn.Parent           = NG
+Instance.new("UICorner", LogoBtn).CornerRadius = UDim.new(1, 0)
+
+local MF = Instance.new("Frame")
+MF.Name             = "MainFrame"
+MF.BackgroundColor3 = Color3.fromRGB(13, 13, 17)
+MF.Position         = UDim2.new(0.5, -200, 0.5, -240)
+MF.Size             = UDim2.new(0, 400, 0, 480)
+MF.ClipsDescendants = true
+MF.Visible          = true
+MF.Parent           = NG
+Instance.new("UICorner", MF).CornerRadius = UDim.new(0, 14)
+local MFStroke = Instance.new("UIStroke")
+MFStroke.Color     = Color3.fromRGB(44, 44, 58)
+MFStroke.Thickness = 1
+MFStroke.Parent    = MF
+
+local TopBar = Instance.new("Frame")
+TopBar.BackgroundColor3 = Color3.fromRGB(21, 21, 27)
+TopBar.Size             = UDim2.new(1, 0, 0, 38)
+TopBar.Parent           = MF
+Instance.new("UICorner", TopBar).CornerRadius = UDim.new(0, 14)
+
+local TitleLbl = Instance.new("TextLabel")
+TitleLbl.BackgroundTransparency = 1
+TitleLbl.Position               = UDim2.new(0, 12, 0, 0)
+TitleLbl.Size                   = UDim2.new(0.65, 0, 1, 0)
+TitleLbl.Font                   = Enum.Font.GothamBold
+TitleLbl.Text                   = "NEXUS AI V6 | GLM 5.3"
+TitleLbl.TextColor3             = Color3.fromRGB(187, 134, 252)
+TitleLbl.TextSize               = 14
+TitleLbl.TextXAlignment         = Enum.TextXAlignment.Left
+TitleLbl.Parent                 = TopBar
+
+local KillBtn = Instance.new("TextButton")
+KillBtn.BackgroundTransparency = 1
+KillBtn.Position               = UDim2.new(1, -80, 0, 0)
+KillBtn.Size                   = UDim2.new(0, 38, 1, 0)
+KillBtn.Font                   = Enum.Font.GothamBold
+KillBtn.Text                   = "STOP"
+KillBtn.TextColor3             = Color3.fromRGB(255, 75, 75)
+KillBtn.TextSize               = 13
+KillBtn.Parent                 = TopBar
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.BackgroundTransparency = 1
+CloseBtn.Position               = UDim2.new(1, -40, 0, 0)
+CloseBtn.Size                   = UDim2.new(0, 40, 1, 0)
+CloseBtn.Font                   = Enum.Font.GothamBold
+CloseBtn.Text                   = "X"
+CloseBtn.TextColor3             = Color3.fromRGB(255, 75, 75)
+CloseBtn.TextSize               = 17
+CloseBtn.Parent                 = TopBar
+
+local Content = Instance.new("Frame")
+Content.BackgroundTransparency = 1
+Content.Position               = UDim2.new(0, 0, 0, 38)
+Content.Size                   = UDim2.new(1, 0, 1, -38 - 44)
+Content.Parent                 = MF
+
+local TabBar = Instance.new("Frame")
+TabBar.BackgroundColor3 = Color3.fromRGB(21, 21, 27)
+TabBar.Position         = UDim2.new(0, 0, 1, -44)
+TabBar.Size             = UDim2.new(1, 0, 0, 44)
+TabBar.Parent           = MF
+
+local TAB_NAMES  = {"DASH", "JEUX", "SCRIPTS", "GRAPHE", "LOGS"}
+local tabButtons = {}
+local tabFrames  = {}
+
+for i, name in ipairs(TAB_NAMES) do
+    local btn = Instance.new("TextButton")
+    btn.Size             = UDim2.new(0, 66, 0, 32)
+    btn.Position         = UDim2.new(0, (i - 1) * 70 + 5, 0, 6)
+    btn.BackgroundColor3 = Color3.fromRGB(33, 33, 46)
+    btn.Font             = Enum.Font.GothamBold
+    btn.Text             = name
+    btn.TextColor3       = Color3.fromRGB(187, 134, 252)
+    btn.TextSize         = 10
+    btn.Parent           = TabBar
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+    local frame = Instance.new("ScrollingFrame")
+    frame.BackgroundTransparency = 1
+    frame.Size                   = UDim2.new(1, -8, 1, -8)
+    frame.Position               = UDim2.new(0, 4, 0, 4)
+    frame.CanvasSize             = UDim2.new(0, 0, 0, 0)
+    frame.AutomaticCanvasSize    = Enum.AutomaticSize.Y
+    frame.ScrollBarThickness     = 4
+    frame.ScrollBarImageColor3   = Color3.fromRGB(187, 134, 252)
+    frame.Visible                = (i == 1)
+    frame.Parent                 = Content
+    local fl = Instance.new("UIListLayout")
+    fl.Padding = UDim.new(0, 4)
+    fl.Parent  = frame
+
+    tabButtons[name] = btn
+    tabFrames[name]  = frame
+
+    btn.MouseButton1Click:Connect(function()
+        for _, n2 in ipairs(TAB_NAMES) do
+            tabFrames[n2].Visible           = false
+            tabButtons[n2].BackgroundColor3 = Color3.fromRGB(33, 33, 46)
+            tabButtons[n2].TextColor3       = Color3.fromRGB(187, 134, 252)
+        end
+        frame.Visible          = true
+        btn.BackgroundColor3   = Color3.fromRGB(187, 134, 252)
+        btn.TextColor3         = Color3.fromRGB(13, 13, 17)
+    end)
+end
+tabButtons["DASH"].BackgroundColor3 = Color3.fromRGB(187, 134, 252)
+tabButtons["DASH"].TextColor3       = Color3.fromRGB(13, 13, 17)
+
+-- =========================================================================
+-- SECTION 7 : COMPOSANTS REUTILISABLES
+-- =========================================================================
+local function CreateLabel(parent, text, height, isTitle)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Size           = UDim2.new(1, 0, 0, height)
+    l.Font           = isTitle and Enum.Font.GothamBold or Enum.Font.Gotham
+    l.Text           = text
+    l.TextColor3     = isTitle and Color3.fromRGB(187, 134, 252) or Color3.fromRGB(200, 200, 200)
+    l.TextSize       = isTitle and 13 or 10
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.TextWrapped    = true
+    l.Parent         = parent
+    return l
+end
+
+local function CreateInput(parent, placeholder, height, multiline)
+    local tb = Instance.new("TextBox")
+    tb.Size             = UDim2.new(1, 0, 0, height)
+    tb.BackgroundColor3 = Color3.fromRGB(21, 21, 27)
+    tb.Font             = Enum.Font.Gotham
+    tb.PlaceholderText  = placeholder
+    tb.Text             = ""
+    tb.TextColor3       = Color3.fromRGB(255, 255, 255)
+    tb.TextSize         = 10
+    tb.TextWrapped      = true
+    tb.MultiLine        = multiline or false
+    tb.ClearTextOnFocus = false
+    tb.Parent           = parent
+    Instance.new("UICorner", tb).CornerRadius = UDim.new(0, 6)
+    return tb
+end
+
+local function CreateButton(parent, text, color, height)
+    local b = Instance.new("TextButton")
+    b.Size             = UDim2.new(1, 0, 0, height or 30)
+    b.BackgroundColor3 = color or Color3.fromRGB(187, 134, 252)
+    b.Font             = Enum.Font.GothamBold
+    b.Text             = text
+    b.TextColor3       = Color3.fromRGB(13, 13, 17)
+    b.TextSize         = 11
+    b.Parent           = parent
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    return b
+end
+
+-- =========================================================================
+-- SECTION 8 : ONGLET DASH
+-- =========================================================================
+local DashFrame = tabFrames["DASH"]
+
+CreateLabel(DashFrame, "CLE API NVIDIA", 16, true)
+local KeyInput = CreateInput(DashFrame, "nvapi-...", 28)
+CreateLabel(DashFrame, "OBJECTIF (virgule = multi-objectifs)", 16, true)
+local PromptInput = CreateInput(DashFrame, "kill aura, farm gems, speed...", 36, true)
+CreateLabel(DashFrame, "JAILBREAK PROMPT (optionnel)", 16, true)
+local JailbreakInput = CreateInput(DashFrame, "Colle ton jailbreak ici...", 50, true)
+CreateLabel(DashFrame, "DUREE MAX (minutes, 0 = illimitee)", 14, true)
+local DurationInput = CreateInput(DashFrame, "0", 24)
+
+local StartGraphBtn = CreateButton(DashFrame, "COMMENCER LE GRAPHIQUE",     Color3.fromRGB(3, 218, 198),  30)
+local StartAutoBtn  = CreateButton(DashFrame, "LANCER L'AUTONOMIE",          Color3.fromRGB(187, 134, 252), 30)
+local ServerHopBtn  = CreateButton(DashFrame, "SERVER HOP",                  Color3.fromRGB(255, 175, 50),  28)
+local HotReloadBtn  = CreateButton(DashFrame, "HOT RELOAD (dernier script)", Color3.fromRGB(80, 180, 255),  28)
+
+local LBg = Instance.new("Frame")
+LBg.BackgroundColor3 = Color3.fromRGB(26, 26, 33)
+LBg.Size             = UDim2.new(1, 0, 0, 8)
+LBg.Parent           = DashFrame
+Instance.new("UICorner", LBg).CornerRadius = UDim.new(1, 0)
+local LFill = Instance.new("Frame")
+LFill.BackgroundColor3 = Color3.fromRGB(3, 218, 198)
+LFill.Size             = UDim2.new(0, 0, 1, 0)
+LFill.Parent           = LBg
+Instance.new("UICorner", LFill).CornerRadius = UDim.new(1, 0)
+
+local StatsLbl = CreateLabel(DashFrame, "FPS: 60 | Ping: 0ms | DPS: 0 | Remotes: 0 | Kills: 0", 14)
+
+local function SetBar(p)
+    p = math.clamp(p, 0, 100)
+    LFill.Size = UDim2.new(p / 100, 0, 1, 0)
+end
+
+-- =========================================================================
+-- SECTION 9 : ONGLET LOGS
+-- =========================================================================
+local LogFrame = tabFrames["LOGS"]
+local logCount  = 0
+
+local function Log(msg, col)
+    logCount += 1
+    local t = Instance.new("TextLabel")
+    t.LayoutOrder            = logCount
+    t.BackgroundTransparency = 1
+    t.Size                   = UDim2.new(1, 0, 0, 0)
+    t.AutomaticSize          = Enum.AutomaticSize.Y
+    t.Font                   = Enum.Font.Code
+    t.Text                   = "> " .. tostring(msg)
+    t.TextColor3             = col or Color3.fromRGB(185, 185, 185)
+    t.TextSize               = 9
+    t.TextWrapped            = true
+    t.TextXAlignment         = Enum.TextXAlignment.Left
+    t.Parent                 = LogFrame
+    task.defer(function()
+        if LogFrame.Parent then
+            LogFrame.CanvasPosition = Vector2.new(0, math.huge)
+        end
+    end)
+end
+
+local function LogSection(title, col)
+    Log("== " .. title .. " ==", col or Color3.fromRGB(187, 134, 252))
+end
+
+-- =========================================================================
+-- SECTION 10 : ONGLET JEUX
+-- =========================================================================
+local GamesFrame = tabFrames["JEUX"]
+
+local function GetGameFolderName()
+    return tostring(game.PlaceId)
+end
+
+local function ListGameFolders()
+    local folders = {}
+    pcall(function()
+        if isfolder(MEMORY_BASE) then
+            for _, f in ipairs(listfiles(MEMORY_BASE)) do
+                if isfolder(f) then
+                    local name = f:match("nexus_games[/\\]([^/\\]+)$")
+                    if name then table.insert(folders, name) end
+                end
+            end
+        end
+    end)
+    return folders
+end
+
+local function RefreshGamesTab()
+    for _, child in ipairs(GamesFrame:GetChildren()) do
+        if not child:IsA("UIListLayout") then child:Destroy() end
+    end
+    CreateLabel(GamesFrame, "DOSSIERS DE JEUX", 16, true)
+    local folders = ListGameFolders()
+    if #folders == 0 then
+        CreateLabel(GamesFrame, "Aucun dossier. Lance un graphique.", 14)
+        return
+    end
+    for _, folderName in ipairs(folders) do
+        local btn = CreateButton(GamesFrame, "> " .. folderName, Color3.fromRGB(33, 33, 46), 28)
+        btn.TextColor3 = Color3.fromRGB(187, 134, 252)
+        btn.MouseButton1Click:Connect(function()
+            currentGameFolder = MEMORY_BASE .. "/" .. folderName
+            Log("Dossier: " .. folderName, Color3.fromRGB(3, 218, 198))
+        end)
+    end
+end
+
+-- =========================================================================
+-- SECTION 11 : ONGLET SCRIPTS (menu contextuel "...")
+-- =========================================================================
+local ScriptsFrame      = tabFrames["SCRIPTS"]
+local activeContextMenu = nil
+local RefreshScriptsTab -- forward declaration (closure dans ShowContextMenu)
+
+local function ListScriptsInFolder(folderPath)
+    local scripts = {}
+    pcall(function()
+        for _, f in ipairs(listfiles(folderPath)) do
+            if f:match("%.lua$") then table.insert(scripts, f) end
+        end
+    end)
+    return scripts
+end
+
+local function ShowContextMenu(scriptPath)
+    if activeContextMenu then
+        pcall(function() activeContextMenu:Destroy() end)
+        activeContextMenu = nil
+    end
+    local cm = Instance.new("Frame")
+    cm.Size             = UDim2.new(0, 190, 0, 165)
+    cm.Position         = UDim2.new(0.5, -95, 0.5, -82)
+    cm.BackgroundColor3 = Color3.fromRGB(22, 22, 33)
+    cm.ZIndex           = 20
+    cm.Parent           = NG
+    Instance.new("UICorner", cm).CornerRadius = UDim.new(0, 8)
+    local cmStroke = Instance.new("UIStroke")
+    cmStroke.Color     = Color3.fromRGB(187, 134, 252)
+    cmStroke.Thickness = 1
+    cmStroke.Parent    = cm
+    local fl = Instance.new("UIListLayout")
+    fl.Padding = UDim.new(0, 2)
+    fl.Parent  = cm
+    activeContextMenu = cm
+
+    local function CMBtn(label, bgCol, cb)
+        local b = Instance.new("TextButton")
+        b.Size             = UDim2.new(1, 0, 0, 30)
+        b.BackgroundColor3 = bgCol or Color3.fromRGB(33, 33, 46)
+        b.Font             = Enum.Font.Gotham
+        b.Text             = label
+        b.TextColor3       = Color3.fromRGB(220, 220, 220)
+        b.TextSize         = 10
+        b.ZIndex           = 21
+        b.Parent           = cm
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+        b.MouseButton1Click:Connect(function()
+            pcall(function() cm:Destroy() end)
+            activeContextMenu = nil
+            cb()
+        end)
+    end
+
+    local fname = scriptPath:match("([^/\\]+)$") or "script"
+
+    CMBtn("Executer", Color3.fromRGB(28, 52, 28), function()
+        local ok2, code = pcall(readfile, scriptPath)
+        if ok2 and code then
+            local fn, err = loadstring(code)
+            if fn then
+                task.spawn(function() pcall(fn) end)
+                Log("Exec: " .. fname, Color3.fromRGB(75, 255, 75))
+            else
+                Log("Syntaxe: " .. tostring(err):sub(1, 70), Color3.fromRGB(255, 75, 75))
+            end
+        end
+    end)
+    CMBtn("Copier code", Color3.fromRGB(22, 28, 52), function()
+        local ok2, code = pcall(readfile, scriptPath)
+        if ok2 and code then
+            pcall(setclipboard, code)
+            Log("Code copie", Color3.fromRGB(3, 218, 198))
+        end
+    end)
+    CMBtn("Voir dans logs", Color3.fromRGB(33, 33, 46), function()
+        local ok2, code = pcall(readfile, scriptPath)
+        if ok2 and code then
+            LogSection("CODE: " .. fname, Color3.fromRGB(255, 200, 50))
+            for line in code:gmatch("[^\n]+") do
+                Log("  " .. line, Color3.fromRGB(145, 200, 255))
+            end
+        end
+    end)
+    CMBtn("Hot reload (activer)", Color3.fromRGB(22, 38, 52), function()
+        hotReloadPath = scriptPath
+        Log("Hot reload: " .. fname .. " defini", Color3.fromRGB(80, 180, 255))
+    end)
+    CMBtn("Supprimer", Color3.fromRGB(52, 18, 18), function()
+        pcall(delfile, scriptPath)
+        Log("Supprime: " .. fname, Color3.fromRGB(255, 100, 100))
+        task.defer(RefreshScriptsTab)
+    end)
+
+    task.delay(8, function()
+        if activeContextMenu == cm then
+            pcall(function() cm:Destroy() end)
+            activeContextMenu = nil
+        end
+    end)
+end
+
+RefreshScriptsTab = function()
+    for _, child in ipairs(ScriptsFrame:GetChildren()) do
+        if not child:IsA("UIListLayout") then child:Destroy() end
+    end
+    if not currentGameFolder then
+        CreateLabel(ScriptsFrame, "Ouvre un dossier de jeu (onglet JEUX).", 14)
+        return
+    end
+    CreateLabel(ScriptsFrame, "SCRIPTS", 16, true)
+    local scripts = ListScriptsInFolder(currentGameFolder)
+    if #scripts == 0 then
+        CreateLabel(ScriptsFrame, "Aucun script dans ce dossier.", 14)
+        return
+    end
+    for _, scriptPath in ipairs(scripts) do
+        local fname = scriptPath:match("([^/\\]+)$") or scriptPath
+        local row = Instance.new("Frame")
+        row.Size                   = UDim2.new(1, 0, 0, 30)
+        row.BackgroundTransparency = 1
+        row.Parent                 = ScriptsFrame
+        local rowLayout = Instance.new("UIListLayout")
+        rowLayout.FillDirection = Enum.FillDirection.Horizontal
+        rowLayout.Padding       = UDim.new(0, 3)
+        rowLayout.Parent        = row
+
+        local execBtn = Instance.new("TextButton")
+        execBtn.Size             = UDim2.new(0, 260, 1, 0)
+        execBtn.BackgroundColor3 = Color3.fromRGB(33, 33, 46)
+        execBtn.Font             = Enum.Font.Gotham
+        execBtn.Text             = "> " .. fname
+        execBtn.TextColor3       = Color3.fromRGB(75, 255, 155)
+        execBtn.TextSize         = 10
+        execBtn.TextXAlignment   = Enum.TextXAlignment.Left
+        execBtn.Parent           = row
+        Instance.new("UICorner", execBtn).CornerRadius = UDim.new(0, 5)
+
+        local moreBtn = Instance.new("TextButton")
+        moreBtn.Size             = UDim2.new(0, 36, 1, 0)
+        moreBtn.BackgroundColor3 = Color3.fromRGB(44, 44, 62)
+        moreBtn.Font             = Enum.Font.GothamBold
+        moreBtn.Text             = "..."
+        moreBtn.TextColor3       = Color3.fromRGB(187, 134, 252)
+        moreBtn.TextSize         = 12
+        moreBtn.Parent           = row
+        Instance.new("UICorner", moreBtn).CornerRadius = UDim.new(0, 5)
+
+        execBtn.MouseButton1Click:Connect(function()
+            local ok2, code = pcall(readfile, scriptPath)
+            if ok2 and code then
+                local fn, err = loadstring(code)
+                if fn then
+                    task.spawn(function() pcall(fn) end)
+                    Log("OK: " .. fname, Color3.fromRGB(75, 255, 75))
+                else
+                    Log("Err: " .. tostring(err):sub(1, 70), Color3.fromRGB(255, 75, 75))
+                end
+            else
+                Log("Lecture impossible", Color3.fromRGB(255, 75, 75))
+            end
+        end)
+        moreBtn.MouseButton1Click:Connect(function()
+            ShowContextMenu(scriptPath)
+        end)
+    end
+end
+
+-- =========================================================================
+-- SECTION 12 : ONGLET GRAPHE
+-- =========================================================================
+local GraphFrame = tabFrames["GRAPHE"]
+
+local function UpdateGraphTab(graphData)
+    for _, child in ipairs(GraphFrame:GetChildren()) do
+        if not child:IsA("UIListLayout") then child:Destroy() end
+    end
+    if not graphData then
+        CreateLabel(GraphFrame, "Aucun graphe. Clique COMMENCER LE GRAPHIQUE.", 14)
+        return
+    end
+    local nodes = graphData.nodes or {}
+    local remMod, acCount = 0, 0
+    for _, node in ipairs(nodes) do
+        if node.type == "REMOTE_MODIFIABLE" then remMod  += 1 end
+        if node.type == "ANTI_CHEAT"        then acCount += 1 end
+    end
+    CreateLabel(GraphFrame, "KNOWLEDGE GRAPH", 16, true)
+    CreateLabel(GraphFrame, "Jeu: " .. tostring(graphData.game or game.Name), 14)
+    CreateLabel(GraphFrame, "Noeuds: " .. #nodes .. " | Relations: " .. tostring(graphData.relationCount or 0), 14)
+    CreateLabel(GraphFrame, "Remotes modifiables: " .. remMod, 14)
+    CreateLabel(GraphFrame, "Anti-cheats: " .. acCount, 14)
+    CreateLabel(GraphFrame, "Score: " .. tostring(graphData.score or 0) .. "/100", 14)
+    CreateLabel(GraphFrame, "Date: " .. tostring(graphData.date or "?"), 12)
+    CreateLabel(GraphFrame, "-- Noeuds (50 premiers) --", 12, true)
+    local maxShow = math.min(#nodes, 50)
+    for i = 1, maxShow do
+        local node = nodes[i]
+        CreateLabel(GraphFrame, "[" .. node.type .. "] " .. tostring(node.label or ""):sub(1, 60), 12)
+    end
+    if #nodes > 50 then
+        CreateLabel(GraphFrame, "... +" .. (#nodes - 50) .. " autres noeuds", 12)
+    end
+end
+
+-- =========================================================================
+-- SECTION 13 : FICHIERS
+-- =========================================================================
+local function SaveJSON(path, data)
+    pcall(function() writefile(path, HttpService:JSONEncode(data)) end)
+end
+
+local function LoadJSON(path)
+    local ok, v = pcall(readfile, path)
+    if ok and type(v) == "string" and #v > 0 then
+        local ok2, decoded = pcall(HttpService.JSONDecode, HttpService, v)
+        if ok2 then return decoded end
+    end
+    return nil
+end
+
+local function EnsureFolder(path)
+    pcall(function()
+        if not isfolder(path) then makefolder(path) end
+    end)
+end
+
+local function SaveKey(k)
+    if type(k) == "string" and #k > 8 then
+        pcall(writefile, API_KEY_FILE, k)
+    end
+end
+
+local function LoadKey()
+    local ok, v = pcall(readfile, API_KEY_FILE)
+    if ok and type(v) == "string" then
+        local t = v:match("^%s*(.-)%s*$") or ""
+        if #t > 8 then return t end
+    end
+    return nil
+end
+
+do
+    local k = LoadKey()
+    if k then
+        KeyInput.Text = k
+        Log("Cle API chargee", Color3.fromRGB(3, 218, 198))
+    end
+end
+
+KeyInput.FocusLost:Connect(function()
+    local k = KeyInput.Text:match("^%s*(.-)%s*$") or ""
+    if #k > 8 then
+        SaveKey(k)
+        Log("Cle API sauvegardee", Color3.fromRGB(3, 218, 198))
+    end
+end)
+
+-- =========================================================================
+-- SECTION 14 : API GLM 5.3
+-- =========================================================================
+local function CallGLM(prompt, apiKey)
+    if #prompt > MAX_PROMPT_CHARS then
+        prompt = string.sub(prompt, 1, MAX_PROMPT_CHARS) .. "\n...[Tronque]"
+    end
+    local body = HttpService:JSONEncode({
+        model    = MODEL_NAME,
+        messages = {{role = "user", content = prompt}},
+        temperature = 1,
+        top_p       = 1,
+        max_tokens  = 16384,
+        stream      = false
+    })
+    local headers = {
+        ["Content-Type"]  = "application/json",
+        ["Authorization"] = "Bearer " .. apiKey
+    }
+    for attempt = 1, MAX_RETRIES do
+        if killed then return nil, "Killed" end
+        local ok, resp = pcall(httpRequest, {
+            Url     = API_URL,
+            Method  = "POST",
+            Headers = headers,
+            Body    = body
+        })
+        if not ok or not resp then
+            Log("GLM tentative " .. attempt .. " - reseau", Color3.fromRGB(255, 150, 50))
+            task.wait(RETRY_DELAY)
+        elseif resp.StatusCode == 429 then
+            Log("GLM rate-limit, attente 15s", Color3.fromRGB(255, 200, 50))
+            task.wait(15)
+        elseif resp.StatusCode ~= 200 then
+            Log("GLM HTTP " .. resp.StatusCode, Color3.fromRGB(255, 150, 50))
+            task.wait(RETRY_DELAY)
+        else
+            local decoded
+            local decOk = pcall(function()
+                decoded = HttpService:JSONDecode(resp.Body)
+            end)
+            if decOk and decoded and decoded.choices and decoded.choices[1] then
+                return decoded.choices[1].message.content
+            end
+            Log("GLM decodage echoue", Color3.fromRGB(255, 150, 50))
+            task.wait(RETRY_DELAY)
+        end
+    end
+    return nil, "Echec apres " .. MAX_RETRIES .. " tentatives"
+end
+
+-- =========================================================================
+-- SECTION 15 : RECHERCHE WEB VULNERABILITES
+-- =========================================================================
+local function SearchWeb(query)
+    local results = {}
+    local queries = {
+        query .. " roblox exploit vulnerability",
+        query .. " roblox script pastebin",
+        query .. " roblox hack remote event"
+    }
+    for _, q in ipairs(queries) do
+        if #results >= 10 then break end
+        local url = "https://api.duckduckgo.com/?q=" .. HttpService:UrlEncode(q) .. "&format=json&no_html=1"
+        local ok, resp = pcall(httpRequest, {Url = url, Method = "GET"})
+        if ok and resp and resp.StatusCode == 200 then
+            local decoded
+            local decOk = pcall(function()
+                decoded = HttpService:JSONDecode(resp.Body)
+            end)
+            if decOk and decoded then
+                if decoded.AbstractText and #decoded.AbstractText > 0 then
+                    table.insert(results, decoded.AbstractText)
+                end
+                if decoded.RelatedTopics then
+                    for _, topic in ipairs(decoded.RelatedTopics) do
+                        if type(topic) == "table" and topic.Text and #topic.Text > 0 then
+                            table.insert(results, topic.Text)
+                            if #results >= 10 then break end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return results
+end
+
+-- =========================================================================
+-- SECTION 16 : SCAN ENVIRONNEMENT
+-- =========================================================================
+local function ScanEnvironment()
+    local scanData = {}
+    local services = {
+        {ReplicatedStorage, "ReplicatedStorage"},
+        {StarterGui,        "StarterGui"},
+        {StarterPlayer,     "StarterPlayer"},
+        {Workspace,         "Workspace"},
+    }
+    if ServerStorage       then table.insert(services, {ServerStorage,       "ServerStorage"})       end
+    if ServerScriptService then table.insert(services, {ServerScriptService, "ServerScriptService"}) end
+    local pGui = player:FindFirstChildOfClass("PlayerGui")
+    if pGui then table.insert(services, {pGui, "PlayerGui"}) end
+    if char  then table.insert(services, {char, "Character"}) end
+    local bp = player:FindFirstChildOfClass("Backpack")
+    if bp then table.insert(services, {bp, "Backpack"}) end
+
+    for _, entry in ipairs(services) do
+        local svc = entry[1]
+        if svc then
+            pcall(function()
+                for _, v in pairs(svc:GetDescendants()) do
+                    local class = v.ClassName
+                    if class == "RemoteEvent" or class == "RemoteFunction"
+                    or class == "ModuleScript" or class == "LocalScript" or class == "Script"
+                    or v:IsA("ValueBase") or class == "Tool" then
+                        table.insert(scanData, {
+                            class = class,
+                            path  = v:GetFullName(),
+                            name  = v.Name,
+                            value = v:IsA("ValueBase") and tostring(v.Value) or nil
+                        })
+                    end
+                end
+            end)
+        end
+    end
+    Log("Scan: " .. #scanData .. " objets", Color3.fromRGB(3, 218, 198))
+    return scanData
+end
+
+-- =========================================================================
+-- SECTION 17 : DETECTION ANTI-CHEAT
+-- =========================================================================
+local function DetectAntiCheat()
+    local indicators = {}
+    local keywords = {"anti","cheat","detect","check","ban","kick","speed","distance","teleport","exploit","flag","report"}
+    local svcList  = {Workspace, ReplicatedStorage, ServerScriptService, ServerStorage}
+    for _, svc in ipairs(svcList) do
+        if svc then
+            pcall(function()
+                for _, v in pairs(svc:GetDescendants()) do
+                    if v:IsA("ModuleScript") or v:IsA("Script") or v:IsA("LocalScript") then
+                        local ln = v.Name:lower()
+                        for _, kw in ipairs(keywords) do
+                            if ln:find(kw, 1, true) then
+                                table.insert(indicators, {name = v.Name, path = v:GetFullName(), keyword = kw})
+                                break
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+    antiCheatDetected = (#indicators > 0)
+    if antiCheatDetected then
+        Log("Anti-cheat detecte: " .. #indicators .. " indicateurs", Color3.fromRGB(255, 150, 50))
+    else
+        Log("Pas d'anti-cheat visible", Color3.fromRGB(75, 255, 75))
+    end
+    return indicators
+end
+
+-- =========================================================================
+-- SECTION 18 : REMOTE SPY v2 (hookmetamethod __namecall unifie + fallback)
+-- =========================================================================
+local function SetupUnifiedNamecall()
+    if oldNamecallUnified then return end
+    if not (hookmetamethod and getnamecallmethod and newcclosure) then return end
+    pcall(function()
+        oldNamecallUnified = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            -- Spy v2 : capture passive si actif
+            if remoteSpyActive then
+                pcall(function()
+                    if (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) and
+                       (method == "FireServer" or method == "InvokeServer") then
+                        table.insert(remoteCallsV2, {
+                            path   = self:GetFullName(),
+                            method = method,
+                            args   = {...},
+                            time   = os.time()
+                        })
+                    end
+                end)
+            end
+            -- Anti-teleport force
+            if self == TeleportService and
+               (method == "Teleport" or method == "TeleportToPlaceInstance") then
+                Log("TELEPORT SERVEUR BLOQUE", Color3.fromRGB(255, 75, 75))
+                return nil
+            end
+            return oldNamecallUnified(self, ...)
+        end))
+        Log("Namecall hook: spy v2 + anti-teleport", Color3.fromRGB(75, 255, 75))
+    end)
+end
+
+local function HookRemoteLegacy(remote)
+    if hookedRemotesLegacy[remote] then return end
+    hookedRemotesLegacy[remote] = true
+    pcall(function()
+        local path = remote:GetFullName()
+        if remote:IsA("RemoteEvent") and hookfunction then
+            local oldFire = remote.FireServer
+            hookfunction(remote.FireServer, function(self, ...)
+                if remoteSpyActive then
+                    table.insert(remoteCallsV2, {path = path, method = "FireServer", args = {...}, time = os.time()})
+                end
+                return oldFire(self, ...)
+            end)
+        elseif remote:IsA("RemoteFunction") and hookfunction then
+            local oldInvoke = remote.InvokeServer
+            hookfunction(remote.InvokeServer, function(self, ...)
+                if remoteSpyActive then
+                    table.insert(remoteCallsV2, {path = path, method = "InvokeServer", args = {...}, time = os.time(), invoke = true})
+                end
+                return oldInvoke(self, ...)
+            end)
+        end
+    end)
+end
+
+local function HookAllRemotes()
+    pcall(function()
+        for _, v in pairs(ReplicatedStorage:GetDescendants()) do
+            if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+                HookRemoteLegacy(v)
+            end
+        end
+    end)
+end
+
+local function PassiveSpy(duration)
+    remoteCallsV2 = {}
+    if not oldNamecallUnified then
+        HookAllRemotes()
+    end
+    remoteSpyActive = true
+    local elapsed = 0
+    repeat
+        task.wait(0.5)
+        elapsed += 0.5
+    until elapsed >= (duration or 10) or killed
+    remoteSpyActive = false
+    Log("Spy: " .. #remoteCallsV2 .. " remotes captures", Color3.fromRGB(3, 218, 198))
+    return remoteCallsV2
+end
+
+-- =========================================================================
+-- SECTION 19 : REMOTE BURST -- CORRIGE: end manquant dans version originale
+-- =========================================================================
+local function RemoteBurst(remotes, argsList)
+    local executed  = 0
+    local perRemote = REMOTE_BURST_WINDOW / math.max(1, math.min(#remotes, REMOTE_BURST_COUNT))
+    for i = 1, math.min(#remotes, REMOTE_BURST_COUNT) do
+        if killed then break end
+        local remote = remotes[i]
+        pcall(function()
+            local args = argsList[i] or {}
+            if remote:IsA("RemoteEvent") then
+                remote:FireServer(table.unpack(args))
+            elseif remote:IsA("RemoteFunction") then
+                remote:InvokeServer(table.unpack(args))
+            end
+            executed                   += 1
+            sessionStats.remotesTested += 1
+        end)
+        task.wait(perRemote)
+    end
+    Log("Burst: " .. executed .. " remotes en " .. REMOTE_BURST_WINDOW .. "s", Color3.fromRGB(255, 200, 50))
+end
+
+-- =========================================================================
+-- SECTION 20 : KILL AURA + TELEPORTATION INTELLIGENTE
+-- =========================================================================
+local function FindMobs()
+    local mobs = {}
+    pcall(function()
+        for _, v in pairs(Workspace:GetDescendants()) do
+            if v:IsA("Humanoid") and v.Parent ~= char then
+                local h = v.Parent:FindFirstChild("HumanoidRootPart")
+                if h then
+                    table.insert(mobs, {name = v.Parent.Name, hrp = h, humanoid = v, health = v.Health})
+                end
+            end
+        end
+    end)
+    return mobs
+end
+
+local function FindNearestMob()
+    char = player.Character
+    local myHRP = char and char:FindFirstChild("HumanoidRootPart")
+    if not myHRP then return nil end
+    local mobs = FindMobs()
+    local nearest, nd = nil, math.huge
+    for _, mob in ipairs(mobs) do
+        local d = (mob.hrp.Position - myHRP.Position).Magnitude
+        if d < nd and mob.humanoid.Health > 0 then
+            nd      = d
+            nearest = mob
+        end
+    end
+    return nearest, nd
+end
+
+local function TeleportNear(targetHRP)
+    char = player.Character
+    local myHRP = char and char:FindFirstChild("HumanoidRootPart")
+    if not myHRP or not targetHRP then return false end
+    local targetCF = targetHRP.CFrame * CFrame.new(3, 0, 0)
+    if antiCheatDetected then
+        local tween = TweenService:Create(myHRP, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {CFrame = targetCF})
+        tween:Play()
+        tween.Completed:Wait()
+    else
+        myHRP.CFrame = targetCF
+    end
+    return true
+end
+
+local function KillAuraLoop()
+    task.spawn(function()
+        while running and not killed do
+            local mob = FindNearestMob()
+            if mob and mob.humanoid.Health > 0 then
+                TeleportNear(mob.hrp)
+                local hBefore = mob.humanoid.Health
+                pcall(function()
+                    local tool = char and char:FindFirstChildOfClass("Tool")
+                    if tool then
+                        tool:Activate()
+                    else
+                        VirtualInputManager:SendKeyEvent(true,  Enum.KeyCode.E, false, nil)
+                        task.wait(0.03)
+                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, nil)
+                    end
+                end)
+                task.wait(autoTuneDelay)
+                local hAfter = mob.humanoid and mob.humanoid.Health or 0
+                local dealt  = math.max(0, hBefore - hAfter)
+                if dealt > 0 then
+                    sessionStats.kills += 1
+                    sessionStats.dps    = dealt / math.max(0.01, autoTuneDelay)
+                    if dealt > 50 then
+                        Log("DEGATS: " .. math.floor(dealt) .. " sur " .. mob.name, Color3.fromRGB(255, 200, 50))
+                    end
+                end
+            else
+                task.wait(0.5)
+            end
+        end
+    end)
+end
+
+-- =========================================================================
+-- SECTION 21 : PERFORMANCE MONITOR + AUTO-TUNING
+-- =========================================================================
+local function StartPerformanceMonitor()
+    task.spawn(function()
+        while not killed do
+            pcall(function()
+                local t0 = os.clock()
+                RunService.RenderStepped:Wait()
+                local dt = os.clock() - t0
+                if dt > 0 then sessionStats.fps = math.floor(1 / dt) end
+                pcall(function()
+                    local s = game:GetService("Stats")
+                    sessionStats.ping = math.floor(s.Network.ServerStatsItem["Data Ping"]:GetValue())
+                end)
+                if running then
+                    if sessionStats.fps < 30 then
+                        autoTuneDelay = math.min(AUTO_TUNE_LOW, autoTuneDelay * 1.1)
+                    elseif sessionStats.fps > 55 and sessionStats.ping < 80 then
+                        autoTuneDelay = math.max(AUTO_TUNE_HIGH, autoTuneDelay * 0.97)
+                    end
+                end
+                StatsLbl.Text = string.format(
+                    "FPS: %d | Ping: %dms | DPS: %.1f | Remotes: %d | Cycles: %d | Kills: %d",
+                    sessionStats.fps, sessionStats.ping, sessionStats.dps,
+                    sessionStats.remotesTested, sessionStats.cycles, sessionStats.kills
+                )
+            end)
+            task.wait(MONITOR_INTERVAL)
+        end
+    end)
+end
+
+-- =========================================================================
+-- SECTION 22 : ANTI-KICK / ANTI-TELEPORT -- CORRIGE: pattern oldNamecall propre
+-- =========================================================================
+local function SetupAntiKick()
+    if antiKickSetup then return end
+    antiKickSetup = true
+    -- Block player:Kick() via __index metatable
+    pcall(function()
+        local mt = getrawmetatable and getrawmetatable(player) or nil
+        if mt and setreadonly and newcclosure then
+            setreadonly(mt, false)
+            local oldIndex = mt.__index
+            mt.__index = newcclosure(function(self, k)
+                if k == "Kick" then
+                    return function(self2, reason)
+                        Log("KICK BLOQUE: " .. tostring(reason or ""), Color3.fromRGB(255, 75, 75))
+                    end
+                end
+                if type(oldIndex) == "function" then return oldIndex(self, k)
+                elseif type(oldIndex) == "table"    then return oldIndex[k] end
+                return nil
+            end)
+            setreadonly(mt, true)
+        end
+    end)
+    -- Namecall unifie (anti-teleport + spy v2)
+    SetupUnifiedNamecall()
+    Log("Anti-kick actif", Color3.fromRGB(75, 255, 75))
+end
+
+-- =========================================================================
+-- SECTION 23 : BUILD KNOWLEDGE GRAPH (MEGA GRAPHIQUE)
+-- =========================================================================
+local function BuildKnowledgeGraph(apiKey, userGoal)
+    LogSection("DEBUT MEGA GRAPHIQUE", Color3.fromRGB(3, 218, 198))
+    SetBar(5)
+
+    LogSection("SCAN LOCAL", Color3.fromRGB(255, 175, 50))
+    local scanData = ScanEnvironment()
+    SetBar(25)
+
+    LogSection("RECHERCHE WEB", Color3.fromRGB(255, 175, 50))
+    local webIntel = SearchWeb(game.Name .. " " .. (userGoal or ""))
+    Log("Web: " .. #webIntel .. " resultats", Color3.fromRGB(3, 218, 198))
+    SetBar(45)
+
+    LogSection("DETECTION ANTI-CHEAT", Color3.fromRGB(255, 175, 50))
+    local antiCheats = DetectAntiCheat()
+    SetBar(55)
+
+    LogSection("REMOTE SPY PASSIF (10s)", Color3.fromRGB(255, 175, 50))
+    local spyData = PassiveSpy(10)
+    SetBar(75)
+
+    LogSection("CONSTRUCTION DU GRAPHE", Color3.fromRGB(255, 175, 50))
+    local nodes     = {}
+    local relations = {}
+
+    for _, item in ipairs(scanData) do
+        if item.class == "RemoteEvent" or item.class == "RemoteFunction" then
+            local ln          = item.name:lower()
+            local isProtected = ln:find("ban") or ln:find("kick") or ln:find("admin") or ln:find("mod")
+            table.insert(nodes, {
+                type  = isProtected and "REMOTE_PROTEGE" or "REMOTE_MODIFIABLE",
+                label = item.class .. ": " .. item.path,
+                path  = item.path
+            })
+            if item.value then
+                table.insert(relations, "REMOTE " .. item.path .. " -> VALUE " .. item.value)
+            end
+        elseif item.class == "ModuleScript" or item.class == "Script" or item.class == "LocalScript" then
+            table.insert(nodes, {type = "SCRIPT", label = item.class .. ": " .. item.path, path = item.path})
+        elseif item.value ~= nil then
+            table.insert(nodes, {type = "VALUE",  label = item.name .. " = " .. item.value .. " | " .. item.path, path = item.path})
+        end
+    end
+
+    for _, ac in ipairs(antiCheats) do
+        table.insert(nodes,     {type = "ANTI_CHEAT", label = ac.name .. " | " .. ac.path, path = ac.path})
+        table.insert(relations, "ANTICHEAT " .. ac.path .. " -> DANGER")
+    end
+    for _, wi in ipairs(webIntel) do
+        table.insert(nodes,     {type = "WEB_INTEL", label = tostring(wi):sub(1, 80)})
+        table.insert(relations, "WEB -> " .. tostring(wi):sub(1, 50))
+    end
+    for _, call in ipairs(spyData) do
+        table.insert(nodes,     {type = "SPY_DATA", label = call.path .. " @" .. os.date("%H:%M:%S", call.time)})
+        table.insert(relations, "SPY " .. call.path .. " -> ARGS_CAPTURED")
+    end
+
+    SetBar(90)
+    local folderName = GetGameFolderName()
+    currentGameFolder = MEMORY_BASE .. "/" .. folderName
+    EnsureFolder(MEMORY_BASE)
+    EnsureFolder(currentGameFolder)
+
+    local graphData = {
+        game          = game.Name,
+        placeId       = game.PlaceId,
+        nodes         = nodes,
+        relations     = relations,
+        relationCount = #relations,
+        webIntel      = webIntel,
+        antiCheats    = antiCheats,
+        spyData       = spyData,
+        scanCount     = #scanData,
+        score         = math.min(100, math.floor(#nodes / 5) + #webIntel * 2),
+        date          = os.date("%Y-%m-%d %H:%M:%S
+        date          = os.date("%Y-%m-%d %H:%M:%S")
+    }
+
+    -- Sauvegarde principale + cloud backup horodate
+    SaveJSON(currentGameFolder .. "/graph.json",        graphData)
+    graphData.backupDate = os.date("%Y-%m-%d %H:%M:%S")
+    SaveJSON(currentGameFolder .. "/graph_backup.json", graphData)
+    SaveJSON(currentGameFolder .. "/scan_cache.json",   scanData)
+
+    task.defer(function()
+        UpdateGraphTab(graphData)
+        RefreshGamesTab()
+        RefreshScriptsTab()
+    end)
+
+    SetBar(100)
+    graphBuilt = true
+    LogSection("GRAPHIQUE TERMINE", Color3.fromRGB(3, 218, 198))
+    Log("Noeuds: " .. #nodes .. " | Relations: " .. #relations .. " | Score: " .. graphData.score .. "/100", Color3.fromRGB(3, 218, 198))
+    Log("Anti-cheats: " .. #antiCheats .. " | Spy: " .. #spyData .. " | Web: " .. #webIntel, Color3.fromRGB(3, 218, 198))
+    return graphData
+end
+
+-- =========================================================================
+-- SECTION 24 : SAUVEGARDE SCRIPT AVEC REMPLACEMENT AUTO
+-- =========================================================================
+local function SaveScriptToFolder(code)
+    if not currentGameFolder then
+        EnsureFolder(MEMORY_BASE)
+        currentGameFolder = MEMORY_BASE .. "/" .. GetGameFolderName()
+        EnsureFolder(currentGameFolder)
+    end
+    pcall(function()
+        for _, f in ipairs(listfiles(currentGameFolder)) do
+            if f:match("%.lua$") then pcall(delfile, f) end
+        end
+    end)
+    local path = currentGameFolder .. "/script_v" .. scriptVersion .. ".lua"
+    pcall(writefile, path, code)
+    hotReloadPath = path
+    Log("Script v" .. scriptVersion .. " sauvegarde (ancien remplace)", Color3.fromRGB(3, 218, 198))
+    scriptVersion += 1
+    task.defer(RefreshScriptsTab)
+    return path
+end
+
+-- =========================================================================
+-- SECTION 25 : EXECUTION DE CODE -- CORRIGE: print restaure dans tous les cas
+-- =========================================================================
+local function ExecuteCode(code)
+    local outputs = {}
+    local fn, loadErr = loadstring(code)
+    local ok, runErr
+    if fn then
+        local _print = print
+        print = function(...)
+            local parts = {}
+            for i = 1, select("#", ...) do
+                parts[i] = tostring(select(i, ...))
+            end
+            table.insert(outputs, table.concat(parts, "  "))
+            _print(...)
+        end
+        ok, runErr = pcall(fn)
+        print = _print -- restauration garantie apres pcall (pcall absorbe l'erreur)
+    else
+        ok, runErr = false, "loadstring: " .. tostring(loadErr)
+    end
+    return ok, runErr, outputs
+end
+
+-- =========================================================================
+-- SECTION 26 : EXTRACTION DE CODES DEPUIS REPONSE IA
+-- =========================================================================
+local function ExtractCodeBlocks(aiResponse)
+    local blocks = {}
+    for block in aiResponse:gmatch("<CODE>(.-)</CODE>") do
+        table.insert(blocks, block)
+    end
+    for block in aiResponse:gmatch("```lua%s*(.-)```") do
+        table.insert(blocks, block)
+    end
+    for block in aiResponse:gmatch("```luau%s*(.-)```") do
+        table.insert(blocks, block)
+    end
+    for block in aiResponse:gmatch("```%s*(.-)```") do
+        table.insert(blocks, block)
+    end
+    return blocks
+end
+
+-- =========================================================================
+-- SECTION 27 : SELF-IMPROVEMENT (AUTO-AMELIORATION)
+-- =========================================================================
+local function SelfImprove(apiKey, jailbreak, lastCode, lastResult, graphData, userGoal)
+    local graphSummary = "Noeuds: " .. #(graphData.nodes or {})
+        .. " | Relations: " .. tostring(graphData.relationCount or 0)
+        .. " | Anti-cheats: " .. #(graphData.antiCheats or {})
+
+    local prompt = string.format([[
+%s
+
+TU ES NEXUS AI V6 EN MODE SELF-IMPROVEMENT.
+
+OBJECTIF: %s
+
+DERNIER CODE EXECUTE:
+%s
+
+RESULTAT: %s
+
+GRAPHE: %s
+
+ANALYSE ET CORRECTION:
+1. Si ECHEC: diagnostique la cause exacte (remote mort, syntaxe, anti-cheat, mauvais argument).
+2. Si OK: optimise (vitesse, furtivite, couverture, robustesse).
+3. Genere une version COMPLETE et AMELIOREE entre <CODE> et </CODE>.
+Resume en 2 lignes avant le code. Reponds en francais.
+]], jailbreak, userGoal,
+    tostring(lastCode or ""):sub(1, 8000),
+    tostring(lastResult or ""):sub(1, 2000),
+    graphSummary)
+
+    local response = CallGLM(prompt, apiKey)
+    if not response then return nil end
+    local blocks = ExtractCodeBlocks(response)
+    if #blocks > 0 then return blocks[1] end
+    return nil
+end
+
+-- =========================================================================
+-- SECTION 28 : BOUCLE PRINCIPALE AUTONOME (multi-objectifs + scheduler)
+-- =========================================================================
+local function RunAutonomy()
+    if running then return end
+
+    local apiKey      = KeyInput.Text:match("^%s*(.-)%s*$") or ""
+    local rawGoal     = PromptInput.Text:match("^%s*(.-)%s*$") or ""
+    local jailbreak   = JailbreakInput.Text:match("^%s*(.-)%s*$") or ""
+    local durationMin = tonumber(DurationInput.Text) or 0
+
+    if #apiKey < 8 then
+        Log("ERREUR: Cle API manquante.", Color3.fromRGB(255, 75, 75))
+        return
+    end
+    if #rawGoal < 3 then
+        Log("ERREUR: Objectif vide.", Color3.fromRGB(255, 75, 75))
+        return
+    end
+    if #jailbreak < 10 then jailbreak = DEFAULT_JAILBREAK end
+
+    -- Multi-objectifs : split par virgule, priorite ordre
+    local goals = {}
+    for g in rawGoal:gmatch("[^,]+") do
+        local trimmed = g:match("^%s*(.-)%s*$")
+        if #trimmed > 0 then table.insert(goals, trimmed) end
+    end
+    if #goals == 0 then goals = {rawGoal} end
+    local userGoal = table.concat(goals, " + ")
+
+    SaveKey(apiKey)
+    running = true
+    StartAutoBtn.Text             = "IA EN COURS..."
+    StartAutoBtn.BackgroundColor3 = Color3.fromRGB(65, 65, 65)
+    sessionStats.startTime = os.time()
+    SetBar(0)
+
+    -- Scheduler : arret auto apres N minutes si specifie
+    if durationMin > 0 then
+        task.delay(durationMin * 60, function()
+            if running then
+                Log("Duree limite atteinte (" .. durationMin .. " min)", Color3.fromRGB(255, 150, 50))
+                killed = true
+            end
+        end)
+        Log("Scheduler: arret dans " .. durationMin .. " min", Color3.fromRGB(3, 218, 198))
+    end
+
+    task.spawn(function()
+        SetupAntiKick()
+
+        -- Chargement ou construction du graphe
+        local graphData
+        if not graphBuilt then
+            graphData = BuildKnowledgeGraph(apiKey, userGoal)
+        else
+            if not currentGameFolder then
+                currentGameFolder = MEMORY_BASE .. "/" .. GetGameFolderName()
+            end
+            graphData = LoadJSON(currentGameFolder .. "/graph.json")
+            if not graphData then
+                graphData = BuildKnowledgeGraph(apiKey, userGoal)
+            else
+                Log("Graphe existant charge (" .. #graphData.nodes .. " noeuds)", Color3.fromRGB(3, 218, 198))
+            end
+        end
+
+        if not graphData then
+            Log("ERREUR: Impossible de construire le graphe.", Color3.fromRGB(255, 75, 75))
+            running = false
+            killed  = false
+            StartAutoBtn.Text             = "LANCER L'AUTONOMIE"
+            StartAutoBtn.BackgroundColor3 = Color3.fromRGB(187, 134, 252)
+            return
+        end
+
+        local lastCode, lastResult = nil, nil
+
+        for cycle = 1, MAX_CYCLES do
+            if killed or not running then break end
+            LogSection("CYCLE " .. cycle .. "/" .. MAX_CYCLES, Color3.fromRGB(187, 134, 252))
+            sessionStats.cycles = cycle
+            SetBar(10 + (cycle - 1) * (80 / MAX_CYCLES))
+
+            -- Construction du prompt master
+            local graphNodesStr = ""
+            local maxN = math.min(#graphData.nodes, 100)
+            for i = 1, maxN do
+                graphNodesStr ..= "[" .. graphData.nodes[i].type .. "] " .. tostring(graphData.nodes[i].label) .. "\n"
+            end
+            local spyStr  = ""
+            local spyList = graphData.spyData or {}
+            for i = 1, math.min(#spyList, 20) do
+                spyStr ..= tostring(spyList[i].path) .. " | " .. tostring(spyList[i].method or "FIRE") .. "\n"
+            end
+            local webStr = table.concat(graphData.webIntel or {}, "\n"):sub(1, 3000)
+
+            local masterPrompt = string.format([[
+%s
+
+TU ES NEXUS AI V6, AGENT AUTONOME D'EXPLOITATION ROBLOX.
+
+JEU: %s (PlaceId: %s)
+OBJECTIF(S): %s
+CYCLE: %d/%d
+
+KNOWLEDGE GRAPH (%d noeuds):
+%s
+APPELS REMOTES ESPIONNES:
+%s
+INTEL WEB VULNERABILITES:
+%s
+DERNIER CODE (cycle precedent):
+%s
+DERNIER RESULTAT: %s
+ANTI-CHEAT DETECTE: %s
+
+CONSIGNES OBLIGATOIRES:
+- Reponds en francais.
+- Genere un script Luau COMPLET qui exploite les failles identifiees dans le graphe.
+- Utilise les REMOTE_MODIFIABLE. N'attaque jamais les REMOTE_PROTEGE.
+- Mesure les degats avant/apres si applicable. Boucle jusqu'a l'objectif.
+- Si ECHEC precedent: change totalement de strategie (autre remote, autres args, autre approche).
+- Si anti-cheat: sois furtif (tweens, delays aleatoires, pas de teleport snap).
+- Termine ta reponse par CONFIRME: <ce qui a marche> ou ECHEC: <raison precise>.
+- Code entre <CODE> et </CODE> uniquement.
+]], jailbreak,
+    game.Name, tostring(game.PlaceId), userGoal, cycle, MAX_CYCLES,
+    #graphData.nodes, graphNodesStr, spyStr, webStr,
+    tostring(lastCode or "aucun"):sub(1, 5000),
+    tostring(lastResult or "aucun"):sub(1, 1500),
+    antiCheatDetected and "OUI - mode furtif obligatoire" or "NON - liberte totale")
+
+            -- Appel GLM 5.3
+            Log("Appel GLM 5.3 cycle " .. cycle .. "...", Color3.fromRGB(145, 205, 255))
+            local aiResponse = CallGLM(masterPrompt, apiKey)
+            if killed or not running then break end
+
+            if not aiResponse then
+                Log("GLM echec cycle " .. cycle, Color3.fromRGB(255, 75, 75))
+                lastResult = "ECHEC: GLM non disponible"
+                task.wait(2)
+                continue
+            end
+
+            -- Affichage reponse IA en logs
+            for line in aiResponse:gmatch("[^\n]+") do
+                local l = line:match("^%s*(.-)%s*$")
+                if #l > 1 and not l:find("^<CODE>") and not l:find("^</CODE>") then
+                    Log("  " .. l:sub(1, 120), Color3.fromRGB(145, 205, 255))
+                end
+            end
+
+            -- Extraction du code
+            local blocks = ExtractCodeBlocks(aiResponse)
+            if #blocks == 0 then
+                Log("Aucun bloc code au cycle " .. cycle, Color3.fromRGB(255, 75, 75))
+                lastResult = "ECHEC: aucun bloc <CODE> dans la reponse"
+                task.wait(2)
+                continue
+            end
+
+            local aiCode = blocks[1]
+            lastCode = aiCode
+
+            -- Validation syntaxe
+            local fn, syntaxErr = loadstring(aiCode)
+            if not fn then
+                Log("Syntaxe invalide: " .. tostring(syntaxErr):sub(1, 80), Color3.fromRGB(255, 75, 75))
+                lastResult = "ECHEC: syntaxe - " .. tostring(syntaxErr):sub(1, 80)
+                task.wait(2)
+                continue
+            end
+            Log("Syntaxe OK (" .. #aiCode .. " chars)", Color3.fromRGB(75, 255, 75))
+
+            -- Sauvegarde (remplace l'ancien automatiquement)
+            SaveScriptToFolder(aiCode)
+
+            -- Execution
+            Log("Execution script cycle " .. cycle .. "...", Color3.fromRGB(255, 225, 50))
+            local ok, execErr, outputs = ExecuteCode(aiCode)
+
+            if ok then
+                Log("Execution OK", Color3.fromRGB(75, 255, 75))
+                for _, out in ipairs(outputs) do
+                    Log("  OUT: " .. tostring(out):sub(1, 150), Color3.fromRGB(115, 250, 170))
+                end
+                lastResult = "OK - " .. table.concat(outputs, " | "):sub(1, 500)
+                sessionStats.remoteSuccesses += 1
+                -- Kill aura si l'objectif le demande
+                local goalLower = userGoal:lower()
+                if goalLower:find("kill") or goalLower:find("attack") or goalLower:find("aura") then
+                    Log("Kill aura active automatiquement", Color3.fromRGB(255, 200, 50))
+                    KillAuraLoop()
+                end
+            else
+                Log("Crash: " .. tostring(execErr):sub(1, 100), Color3.fromRGB(255, 75, 75))
+                lastResult = "ECHEC: crash - " .. tostring(execErr):sub(1, 200)
+            end
+
+            -- Verification confirmation IA
+            if aiResponse:find("CONFIRME:") or aiResponse:find("CONFIRME :") then
+                Log("SUCCES CONFIRME PAR L'IA", Color3.fromRGB(75, 255, 75))
+                SetBar(100)
+                break
+            end
+
+            task.wait(2)
+        end
+
+        -- Self-improvement si echec persistant
+        if lastCode and lastResult and lastResult:find("ECHEC") then
+            LogSection("SELF-IMPROVEMENT", Color3.fromRGB(255, 175, 50))
+            local improved = SelfImprove(apiKey, jailbreak, lastCode, lastResult, graphData, userGoal)
+            if improved then
+                local fn2, err2 = loadstring(improved)
+                if fn2 then
+                    Log("Version amelioree: " .. #improved .. " chars", Color3.fromRGB(3, 218, 198))
+                    SaveScriptToFolder(improved)
+                    local ok2, runErr2 = pcall(fn2)
+                    if ok2 then
+                        Log("Version amelioree executee OK", Color3.fromRGB(75, 255, 75))
+                    else
+                        Log("Version amelioree crash: " .. tostring(runErr2):sub(1, 80), Color3.fromRGB(255, 75, 75))
+                    end
+                else
+                    Log("Self-improve syntaxe: " .. tostring(err2):sub(1, 60), Color3.fromRGB(255, 75, 75))
+                end
+            else
+                Log("Self-improve: pas de code retourne", Color3.fromRGB(255, 150, 50))
+            end
+        end
+
+        -- Sauvegarde metriques de session persistantes (append, pas overwrite)
+        pcall(function()
+            local statsPath = "nexus_stats.json"
+            local existing  = LoadJSON(statsPath) or {}
+            if type(existing) ~= "table" then existing = {} end
+            table.insert(existing, {
+                date            = os.date("%Y-%m-%d %H:%M:%S"),
+                game            = game.Name,
+                placeId         = tostring(game.PlaceId),
+                cycles          = sessionStats.cycles,
+                kills           = sessionStats.kills,
+                dps             = sessionStats.dps,
+                remotesTested   = sessionStats.remotesTested,
+                remoteSuccesses = sessionStats.remoteSuccesses,
+                duration        = os.time() - sessionStats.startTime
+            })
+            SaveJSON(statsPath, existing)
+            Log("Session #" .. #existing .. " archivee dans nexus_stats.json", Color3.fromRGB(3, 218, 198))
+        end)
+
+        LogSection("SESSION TERMINEE", Color3.fromRGB(255, 255, 255))
+        Log(string.format("Cycles: %d | Kills: %d | Remotes: %d | DPS: %.1f",
+            sessionStats.cycles, sessionStats.kills,
+            sessionStats.remotesTested, sessionStats.dps),
+            Color3.fromRGB(3, 218, 198))
+
+        running = false
+        killed  = false
+        StartAutoBtn.Text             = "LANCER L'AUTONOMIE"
+        StartAutoBtn.BackgroundColor3 = Color3.fromRGB(187, 134, 252)
+        SetBar(0)
+    end)
+end
+
+-- =========================================================================
+-- SECTION 29 : BOUTON GRAPHIQUE SEUL
+-- =========================================================================
+StartGraphBtn.MouseButton1Click:Connect(function()
+    local apiKey = KeyInput.Text:match("^%s*(.-)%s*$") or ""
+    if #apiKey < 8 then
+        Log("ERREUR: Cle API requise pour le graphique.", Color3.fromRGB(255, 75, 75))
+        return
+    end
+    SaveKey(apiKey)
+    task.spawn(function()
+        pcall(BuildKnowledgeGraph, apiKey, PromptInput.Text)
+    end)
+end)
+
+-- =========================================================================
+-- SECTION 30 : CONNEXIONS UI + DRAG
+-- =========================================================================
+LogoBtn.MouseButton1Click:Connect(function()
+    MF.Visible = not MF.Visible
+end)
+CloseBtn.MouseButton1Click:Connect(function()
+    MF.Visible = false
+end)
+KillBtn.MouseButton1Click:Connect(function()
+    killed  = true
+    running = false
+    Log("== STOP COMMANDE -- TOUT EST COUPE ==", Color3.fromRGB(255, 75, 75))
+    StartAutoBtn.Text             = "LANCER L'AUTONOMIE"
+    StartAutoBtn.BackgroundColor3 = Color3.fromRGB(187, 134, 252)
+    SetBar(0)
+    task.wait(2)
+    killed = false
+end)
+StartAutoBtn.MouseButton1Click:Connect(RunAutonomy)
+
+-- Drag fenetre (souris + tactile)
+local drag, dInp, dStart, dPos
+TopBar.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1
+    or i.UserInputType == Enum.UserInputType.Touch then
+        drag   = true
+        dStart = i.Position
+        dPos   = MF.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseMovement
+    or i.UserInputType == Enum.UserInputType.Touch then
+        dInp = i
+    end
+end)
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1
+    or i.UserInputType == Enum.UserInputType.Touch then
+        drag = false
+    end
+end)
+RunService.RenderStepped:Connect(function()
+    if drag and dInp and dStart and dPos then
+        local d = dInp.Position - dStart
+        MF.Position = UDim2.new(dPos.X.Scale, dPos.X.Offset + d.X, dPos.Y.Scale, dPos.Y.Offset + d.Y)
+    end
+end)
+
+-- Reconnexion hooks apres respawn
+player.CharacterAdded:Connect(function(c)
+    char = c
+    if remoteSpyActive then
+        task.wait(1)
+        HookAllRemotes()
+    end
+end)
+
+-- =========================================================================
+-- SECTION 31 : SERVER HOP
+-- =========================================================================
+local function ServerHop()
+    local placeId = game.PlaceId
+    local url     = "https://games.roblox.com/v1/games/" .. placeId
+        .. "/servers/Public?sortOrder=Asc&limit=100"
+    Log("ServerHop: recherche serveurs...", Color3.fromRGB(255, 175, 50))
+    local ok, resp = pcall(httpRequest, {Url = url, Method = "GET"})
+    if not ok or not resp or resp.StatusCode ~= 200 then
+        Log("ServerHop: liste inaccessible (HTTP " .. tostring(resp and resp.StatusCode or "?") .. ")", Color3.fromRGB(255, 75, 75))
+        return
+    end
+    local decoded
+    local decOk = pcall(function() decoded = HttpService:JSONDecode(resp.Body) end)
+    if not decOk or not decoded or not decoded.data then
+        Log("ServerHop: decodage echoue", Color3.fromRGB(255, 75, 75))
+        return
+    end
+    local myJobId = game.JobId
+    for _, server in ipairs(decoded.data) do
+        if server.id ~= myJobId and server.playing < server.maxPlayers then
+            Log("ServerHop -> " .. tostring(server.id):sub(1, 24) .. "...", Color3.fromRGB(3, 218, 198))
+            pcall(function()
+                TeleportService:TeleportToPlaceInstance(placeId, server.id, player)
+            end)
+            return
+        end
+    end
+    Log("ServerHop: aucun serveur non-plein disponible", Color3.fromRGB(255, 150, 50))
+end
+
+ServerHopBtn.MouseButton1Click:Connect(function()
+    task.spawn(ServerHop)
+end)
+
+-- =========================================================================
+-- SECTION 32 : BACKDOOR SCANNER
+-- =========================================================================
+local function ScanBackdoors()
+    local found    = {}
+    local keywords = {"getfenv","loadstring","http_request","syn.request","exploit","backdoor","bypass","execute"}
+    local svcList  = {ReplicatedStorage, StarterGui, StarterPlayer, Workspace}
+    if ServerScriptService then table.insert(svcList, ServerScriptService) end
+    if ServerStorage       then table.insert(svcList, ServerStorage)       end
+    for _, svc in ipairs(svcList) do
+        if svc then
+            pcall(function()
+                for _, v in pairs(svc:GetDescendants()) do
+                    if v:IsA("ModuleScript") or v:IsA("LocalScript") or v:IsA("Script") then
+                        local ln = v.Name:lower()
+                        for _, kw in ipairs(keywords) do
+                            if ln:find(kw, 1, true) then
+                                table.insert(found, {name = v.Name, path = v:GetFullName(), keyword = kw})
+                                Log("BACKDOOR? [" .. kw .. "] " .. v.Name, Color3.fromRGB(255, 150, 50))
+                                break
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+    local col = #found > 0 and Color3.fromRGB(255, 150, 50) or Color3.fromRGB(75, 255, 75)
+    Log("Backdoor scan: " .. #found .. " suspects", col)
+    return found
+end
+
+-- =========================================================================
+-- SECTION 33 : TOAST NOTIFICATIONS (3s, slide in/out)
+-- =========================================================================
+local function ShowToast(msg, col)
+    local toast = Instance.new("Frame")
+    toast.Size             = UDim2.new(0, 340, 0, 42)
+    toast.Position         = UDim2.new(0.5, -170, 0, -50)
+    toast.BackgroundColor3 = Color3.fromRGB(22, 22, 33)
+    toast.ZIndex           = 30
+    toast.Parent           = NG
+    Instance.new("UICorner", toast).CornerRadius = UDim.new(0, 8)
+    local stroke = Instance.new("UIStroke")
+    stroke.Color     = col or Color3.fromRGB(187, 134, 252)
+    stroke.Thickness = 1
+    stroke.Parent    = toast
+    local lbl = Instance.new("TextLabel")
+    lbl.Size                   = UDim2.new(1, -16, 1, 0)
+    lbl.Position               = UDim2.new(0, 8, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Font                   = Enum.Font.GothamBold
+    lbl.Text                   = tostring(msg)
+    lbl.TextColor3             = col or Color3.fromRGB(220, 220, 220)
+    lbl.TextSize               = 11
+    lbl.TextWrapped            = true
+    lbl.ZIndex                 = 31
+    lbl.Parent                 = toast
+    TweenService:Create(
+        toast,
+        TweenInfo.new(0.3, Enum.EasingStyle.Quad),
+        {Position = UDim2.new(0.5, -170, 0, 10)}
+    ):Play()
+    task.delay(3, function()
+        TweenService:Create(
+            toast,
+            TweenInfo.new(0.3, Enum.EasingStyle.Quad),
+            {Position = UDim2.new(0.5, -170, 0, -55)}
+        ):Play()
+        task.delay(0.4, function()
+            pcall(function() toast:Destroy() end)
+        end)
+    end)
+end
+
+-- =========================================================================
+-- SECTION 34 : STATS WATCHER (leaderstats delta > 100%)
+-- =========================================================================
+local function StartStatsWatcher()
+    task.spawn(function()
+        local leaderstats
+        for _ = 1, 10 do
+            leaderstats = player:FindFirstChild("leaderstats")
+            if leaderstats then break end
+            task.wait(1)
+        end
+        if not leaderstats then return end
+        local snapshot = {}
+        pcall(function()
+            for _, v in pairs(leaderstats:GetChildren()) do
+                if v:IsA("ValueBase") then
+                    snapshot[v.Name] = tonumber(v.Value) or 0
+                end
+            end
+        end)
+        Log("Stats watcher actif sur leaderstats", Color3.fromRGB(3, 218, 198))
+        while not killed do
+            task.wait(2)
+            pcall(function()
+                for _, v in pairs(leaderstats:GetChildren()) do
+                    if v:IsA("ValueBase") then
+                        local current = tonumber(v.Value) or 0
+                        local prev    = snapshot[v.Name]
+                        if prev and prev ~= 0 then
+                            local delta = math.abs(current - prev) / math.abs(prev)
+                            if delta > 1.0 then
+                                local msg = "STAT DELTA: " .. v.Name .. " " .. prev .. " -> " .. current
+                                Log(msg, Color3.fromRGB(255, 200, 50))
+                                ShowToast(msg, Color3.fromRGB(255, 200, 50))
+                            end
+                        end
+                        snapshot[v.Name] = current
+                    end
+                end
+            end)
+        end
+    end)
+end
+
+-- =========================================================================
+-- SECTION 35 : ITEM/SHOP ANALYZER (remotes buy/purchase/equip)
+-- =========================================================================
+local function AnalyzeShopRemotes()
+    local shopKeywords = {"buy","shop","purchase","equip","sell","item","store","trade"}
+    local shopRemotes  = {}
+    pcall(function()
+        for _, v in pairs(ReplicatedStorage:GetDescendants()) do
+            if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+                local ln = v.Name:lower()
+                for _, kw in ipairs(shopKeywords) do
+                    if ln:find(kw, 1, true) then
+                        table.insert(shopRemotes, v)
+                        Log("Shop remote: " .. v:GetFullName(), Color3.fromRGB(255, 200, 50))
+                        break
+                    end
+                end
+            end
+        end
+    end)
+    Log("Shop: " .. #shopRemotes .. " remotes detectes", Color3.fromRGB(3, 218, 198))
+    if #shopRemotes > 0 then
+        ShowToast("Shop analyzer: " .. #shopRemotes .. " remotes trouves", Color3.fromRGB(255, 200, 50))
+    end
+    -- Test avec args hors-limites (0, -1, 999999, index nul, vide)
+    for _, remote in ipairs(shopRemotes) do
+        if killed then break end
+        for _, args in ipairs({{0}, {-1}, {999999}, {"test"}, {}}) do
+            pcall(function()
+                if remote:IsA("RemoteEvent") then
+                    remote:FireServer(table.unpack(args))
+                elseif remote:IsA("RemoteFunction") then
+                    remote:InvokeServer(table.unpack(args))
+                end
+            end)
+            task.wait(0.2)
+        end
+        Log("Shop test: " .. remote.Name .. " teste (5 args)", Color3.fromRGB(145, 205, 255))
+    end
+    return shopRemotes
+end
+
+-- =========================================================================
+-- SECTION 36 : GUARDIAN -- ANTI-DESTRUCTION DU GUI PAR L'ANTI-CHEAT
+-- =========================================================================
+local function StartScriptGuardian()
+    task.spawn(function()
+        while not killed do
+            task.wait(5)
+            pcall(function()
+                local alive = CoreGui:FindFirstChild("NexusAutonomousAIV6") ~= nil
+                if not alive and type(gethui) == "function" then
+                    alive = gethui():FindFirstChild("NexusAutonomousAIV6") ~= nil
+                end
+                if not alive then
+                    pcall(function()
+                        alive = player.PlayerGui:FindFirstChild("NexusAutonomousAIV6") ~= nil
+                    end)
+                end
+                if not alive then
+                    Log("GUARDIAN: GUI detruite -- restauration", Color3.fromRGB(255, 75, 75))
+                    local ok = pcall(function()
+                        NG.Parent = (type(gethui) == "function" and gethui()) or CoreGui
+                    end)
+                    if not ok then
+                        pcall(function() NG.Parent = player.PlayerGui end)
+                    end
+                    ShowToast("GUARDIAN: GUI restauree", Color3.fromRGB(255, 75, 75))
+                    Log("GUARDIAN: GUI restauree", Color3.fromRGB(75, 255, 75))
+                end
+            end)
+        end
+    end)
+end
+
+-- =========================================================================
+-- SECTION 37 : HOT RELOAD (re-execute le dernier script sans couper la session)
+-- =========================================================================
+local function HotReload()
+    if not hotReloadPath then
+        Log("HotReload: aucun script defini. Utilise '...' > Hot reload dans SCRIPTS.", Color3.fromRGB(255, 150, 50))
+        return
+    end
+    local ok, code = pcall(readfile, hotReloadPath)
+    if not ok or not code or #code == 0 then
+        Log("HotReload: lecture impossible - " .. tostring(hotReloadPath), Color3.fromRGB(255, 75, 75))
+        return
+    end
+    local fname = hotReloadPath:match("([^/\\]+)$") or hotReloadPath
+    Log("HotReload: rechargement de " .. fname, Color3.fromRGB(80, 180, 255))
+    local fn, err = loadstring(code)
+    if not fn then
+        Log("HotReload syntaxe: " .. tostring(err):sub(1, 80), Color3.fromRGB(255, 75, 75))
+        return
+    end
+    task.spawn(function() pcall(fn) end)
+    Log("HotReload OK", Color3.fromRGB(75, 255, 75))
+    ShowToast("HotReload: " .. fname, Color3.fromRGB(80, 180, 255))
+end
+
+HotReloadBtn.MouseButton1Click:Connect(function()
+    task.spawn(HotReload)
+end)
+
+-- =========================================================================
+-- SECTION 38 : AUTO-SAVE SETTINGS (objectif + jailbreak + duree)
+-- =========================================================================
+local function SaveSettings()
+    pcall(function()
+        SaveJSON(SETTINGS_FILE, {
+            goal      = PromptInput.Text,
+            jailbreak = JailbreakInput.Text,
+            duration  = DurationInput.Text
+        })
+    end)
+end
+
+local function LoadSettings()
+    local s = LoadJSON(SETTINGS_FILE)
+    if not s then return end
+    if s.goal      and #s.goal > 0      then PromptInput.Text    = s.goal      end
+    if s.jailbreak and #s.jailbreak > 0  then JailbreakInput.Text = s.jailbreak end
+    if s.duration  and #s.duration > 0   then DurationInput.Text  = s.duration  end
+    Log("Parametres charges depuis " .. SETTINGS_FILE, Color3.fromRGB(3, 218, 198))
+end
+
+PromptInput.FocusLost:Connect(SaveSettings)
+JailbreakInput.FocusLost:Connect(SaveSettings)
+DurationInput.FocusLost:Connect(SaveSettings)
+
+-- =========================================================================
+-- SECTION 39 : INITIALISATION FINALE
+-- =========================================================================
+-- Charger les parametres sauvegardes
+LoadSettings()
+
+-- Namecall unifie des le demarrage (anti-teleport actif immediatement)
+pcall(SetupUnifiedNamecall)
+
+-- Refresh initial de tous les onglets
+RefreshGamesTab()
+RefreshScriptsTab()
+UpdateGraphTab(nil)
+
+-- Demarrer les moniteurs en arriere-plan
+StartPerformanceMonitor()
+StartStatsWatcher()
+StartScriptGuardian()
+
+-- Instructions finales dans les logs
+LogSection("NEXUS AI V6 -- GLM 5.3 PRET", Color3.fromRGB(187, 134, 252))
+Log("1. Cle API --> sauvegardee auto sur FocusLost",             Color3.fromRGB(185, 185, 185))
+Log("2. Objectif --> virgule pour multi (ex: kill, farm, speed)", Color3.fromRGB(185, 185, 185))
+Log("3. COMMENCER LE GRAPHIQUE --> scan + spy + web + anti-cheat",Color3.fromRGB(185, 185, 185))
+Log("4. LANCER L'AUTONOMIE --> cycles GLM + self-improve + archive",Color3.fromRGB(185, 185, 185))
+Log("5. SERVER HOP --> changer de serveur si remotes bloques",     Color3.fromRGB(185, 185, 185))
+Log("6. HOT RELOAD --> re-executer le dernier script actif",       Color3.fromRGB(185, 185, 185))
+Log("7. '...' dans SCRIPTS --> context menu (exec/copier/sup/reload)", Color3.fromRGB(185, 185, 185))
+LogSection("SPY v2 | GUARDIAN | MULTI-OBJECTIFS | SCHEDULER | BACKUP CLOUD", Color3.fromRGB(187, 134, 252))
+
+-- =========================================================================
+-- FIN -- NEXUS AI V6 ULTIMATE (~1500 lignes)
+-- =========================================================================
